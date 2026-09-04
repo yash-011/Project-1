@@ -1,0 +1,102 @@
+pip install ultralytics opencv-python
+import cv2
+import numpy as np
+from ultralytics import YOLO
+
+# 1. Initialize YOLOv8 Model
+model = YOLO("yolov8n.pt") 
+
+# 2. Calibration Configuration (Based on your image text)
+# Image shows Pixel Height: ~65.67 translates to ~77.43 inches
+CALIBRATED_PIXELS = 65.6743
+KNOWN_HEIGHT_INCHES = 77.4367
+PIXEL_TO_INCH_RATIO = KNOWN_HEIGHT_INCHES / CALIBRATED_PIXELS
+
+# 3. Define the Detection Zone Polygon (The yellow box layout from your image)
+# Note: Update these coordinates [x, y] to match your specific video lane
+ZONE_POLYGON = np.array([,  # Bottom Left,  # Bottom Right,  # Top Right
+    [240, 650]   # Top Left
+], np.int32)
+
+video_path = "highway_traffic.mp4" 
+cap = cv2.VideoCapture(video_path)
+
+while cap.isOpened():
+    success, frame = cap.read()
+    if not success:
+        break
+
+    # Copy frame to draw the transparent overlay zone
+    overlay = frame.copy()
+    cv2.fillPoly(overlay, [ZONE_POLYGON], (0, 165, 255)) # Orange/Yellow filled zone
+    # Apply transparency (alpha=0.3 gives the see-through look from your image)
+    cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
+    cv2.polylines(frame, [ZONE_POLYGON], True, (0, 200, 255), 2) # Zone border
+
+    # Run YOLO detection for Trucks (7), Cars (2), and Buses (5)
+    results = model(frame, classes=[2, 5, 7], stream=True)
+
+    target_height_in = 0.0
+    target_pixel_height = 0.0
+    vehicle_detected_in_zone = False
+
+    for r in results:
+        boxes = r.boxes
+        for box in boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy)
+            conf = float(box.conf)
+            
+            if conf > 0.4:
+                # Calculate the center bottom of the vehicle to check if it's in the zone
+                bottom_center_x = int((x1 + x2) / 2)
+                bottom_center_y = y2
+                
+                # Check if the vehicle's base is inside your yellow measurement zone
+                inside_zone = cv2.pointPolygonTest(ZONE_POLYGON, (bottom_center_x, bottom_center_y), False)
+                
+                if inside_zone >= 0: # 0 means on the line, 1 means completely inside
+                    vehicle_detected_in_zone = True
+                    
+                    # Calculate heights
+                    target_pixel_height = float(y2 - y1)
+                    target_height_in = target_pixel_height * PIXEL_TO_INCH_RATIO
+                    
+                    # Draw a specialized red bounding box for the active vehicle in the zone
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2) # Red Box
+                    
+                    # UI Text tags directly on the vehicle
+                    cv2.putText(frame, "Vehicle 1", (x1, y1 - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    cv2.putText(frame, "Risk: Low", (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                else:
+                    # Draw normal gray boxes for cars outside the measurement zone
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (200, 200, 200), 1)
+
+    # 4. Draw the Top-Left Information Telemetry Panel
+    # Black semi-transparent background box
+    cv2.rectangle(frame, (0, 0), (400, 280), (20, 20, 20), -1)
+    
+    # Static header text
+    cv2.putText(frame, "I-90 EB 430.4 @ Lackawanna", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(frame, "Target Vehicles:", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+    cv2.putText(frame, "----------------", (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+
+    # Dynamic measurement strings
+    if vehicle_detected_in_zone:
+        txt_height = f"1: Height (in.) ...... {target_height_in:.4f}"
+        txt_pixels = f"1: Pixel Height ...... {target_pixel_height:.4f}"
+    else:
+        txt_height = "1: Height (in.) ...... 0.0000"
+        txt_pixels = "1: Pixel Height ...... 0.0000"
+        
+    cv2.putText(frame, txt_height, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv2.putText(frame, txt_pixels, (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+    # Display the final UI framework
+    cv2.imshow("Overheight Vehicle Detection UI System", frame)
+    
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
