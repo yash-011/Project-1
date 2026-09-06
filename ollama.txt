@@ -1,0 +1,33 @@
+import cv2
+import base64
+import requests
+import json
+
+def check_overheight_with_ollama(image_path):
+    # 1. Read and compress image to reduce payload size for speed
+    img = cv2.imread(image_path)
+    _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    img_base64 = base64.b64encode(buffer).decode('utf-8')
+
+    # 2. Setup Ollama API configuration
+    url = "http://localhost:11434/api/generate"
+    
+    # 3. Create a strict prompt to stop Ollama from thinking too long
+    prompt = "Analyze this vehicle on an Indian highway. Is it dangerously overheight, overloaded, or carrying high cargo? Answer with a JSON object containing keys 'overheight' (true/false) and 'confidence_score' (0-100)."
+
+    payload = {
+        "model": "moondream",  # Or "llama3.2-vision"
+        "prompt": prompt,
+        "images": [img_base64],
+        "stream": False,       # Turn off streaming for faster single block return
+        "format": "json"       # Forces model to output structured data quickly
+    }
+
+    try:
+        response = requests.post(url, json=payload)
+        result = json.loads(response.json()['response'])
+        return result.get('overheight', False), result.get('confidence_score', 0)
+    except Exception as e:
+        print(f"Ollama Error: {e}")
+        return False, 0
+
